@@ -13,10 +13,13 @@ class WindowsSocket {
 public:
   WindowsSocket();
   ~WindowsSocket();
-
+  
+  // connection/disconnection functions
   BOOL connect();
   BOOL bind(const UINT16 port);
   BOOL close();
+  
+  // receive/transmit functions
   
 private:
   WSADATA wsadata;
