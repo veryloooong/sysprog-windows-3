@@ -11,6 +11,8 @@
 #include <tchar.h>
 #include <Shlwapi.h>
 
+#define BUFFER_SIZE 2048
+
 void print_err(TCHAR const* where) {
   ::_tprintf(TEXT("%s failed with error %d\n"), where, ::GetLastError());
 }
@@ -27,8 +29,8 @@ public:
       print_err_wsa(TEXT("WSAStartup"));
       return;
     }
-    socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket_handle == INVALID_SOCKET) {
+    client_socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (client_socket == INVALID_SOCKET) {
       print_err_wsa(TEXT("socket"));
       return;
     }
@@ -36,22 +38,25 @@ public:
     sockaddr.sin_port = htons(port);
     if (::InetPton(AF_INET, server_address, &sockaddr.sin_addr) != 1) {
       print_err(TEXT("InetPton"));
-      ::closesocket(socket_handle);
+      ::closesocket(client_socket);
       return;
     }
-    if (::connect(socket_handle, reinterpret_cast<SOCKADDR*>(&sockaddr), sizeof(sockaddr)) == SOCKET_ERROR) {
+    // Attempt to connect to the server
+    ::_tprintf(TEXT("Connecting to server %s on port %d...\n"), server_address, port);
+    if (::connect(client_socket, reinterpret_cast<SOCKADDR*>(&sockaddr), sizeof(sockaddr)) == SOCKET_ERROR) {
       print_err_wsa(TEXT("connect"));
-      ::closesocket(socket_handle);
+      ::closesocket(client_socket);
       return;
     }
+    ::_tprintf(TEXT("Connected to server %s on port %d\n"), server_address, port);
   }
 
   ~ChatClient() {
-    if (socket_handle != INVALID_SOCKET) {
-      if (::closesocket(socket_handle) == SOCKET_ERROR) {
+    if (client_socket != INVALID_SOCKET) {
+      if (::closesocket(client_socket) == SOCKET_ERROR) {
         print_err_wsa(TEXT("closesocket"));
       }
-      socket_handle = INVALID_SOCKET;
+      client_socket = INVALID_SOCKET;
     }
     if (::WSACleanup() == SOCKET_ERROR) {
       print_err_wsa(TEXT("WSACleanup"));
@@ -59,13 +64,91 @@ public:
   }
 
   BOOL is_connected() const {
-    return socket_handle != INVALID_SOCKET;
+    return client_socket != INVALID_SOCKET;
+  }
+
+  BOOL start_session() {
+    if (!is_connected()) {
+      print_err(TEXT("start_session"));
+      return FALSE;
+    }
+    
+    // put the receive loop in a separate thread
+    ::_tprintf(TEXT("Starting session with server...\n"));
+
+    ::CreateThread(nullptr, 0, [](LPVOID param) -> DWORD {
+      ChatClient* client = static_cast<ChatClient*>(param);
+      while (client->receive_message()) {
+        // Keep receiving messages until disconnected
+      }
+      return 0;
+    }, this, 0, nullptr);
+
+    while (true) {
+      TCHAR message[BUFFER_SIZE] = { 0 };
+      ::_tprintf(TEXT("Enter message to send (or 'exit' to quit): "));
+      ::_fgetts(message, BUFFER_SIZE, stdin);
+      // Remove newline character if present
+      size_t len = _tcslen(message);
+      if (len > 0 && message[len - 1] == '\n') {
+        message[len - 1] = '\0';
+      }
+      if (_tcscmp(message, TEXT("exit")) == 0) {
+        break; // Exit the loop if user types 'exit'
+      }
+      if (!send_message(message)) {
+        print_err(TEXT("send_message"));
+        return FALSE;
+      }
+    }
+    return TRUE;
+  }
+
+  BOOL send_message(const TCHAR* message) {
+    if (!is_connected()) {
+      print_err(TEXT("send_message: Not connected to server"));
+      return FALSE;
+    }
+     
+    char send_buffer[BUFFER_SIZE] = { 0 };
+    ::WideCharToMultiByte(CP_UTF8, 0, message, -1, send_buffer, sizeof(send_buffer) - 1, NULL, NULL);
+    int bytes_sent = ::send(client_socket, send_buffer, static_cast<int>(strlen(send_buffer)), 0);
+    if (bytes_sent == SOCKET_ERROR) {
+      print_err_wsa(TEXT("send"));
+      return FALSE;
+    }
+    ::_tprintf(TEXT("Sent message: %s\n"), message);
+    return TRUE;
+  }
+
+  BOOL receive_message() {
+    if (!is_connected()) {
+      print_err(TEXT("loop_receive_message"));
+      return FALSE;
+    }
+    char recv_buffer[BUFFER_SIZE] = { 0 };
+    int bytes_received = ::recv(client_socket, recv_buffer, sizeof(recv_buffer) - 1, 0);
+    if (bytes_received == SOCKET_ERROR) {
+      print_err_wsa(TEXT("recv"));
+      return FALSE;
+    }
+    else if (bytes_received == 0) {
+      ::_tprintf(TEXT("Server disconnected.\n"));
+      return FALSE;
+    }
+    recv_buffer[bytes_received] = '\0'; // Null-terminate the received string
+    TCHAR message[BUFFER_SIZE] = { 0 };
+    ::MultiByteToWideChar(CP_UTF8, 0, recv_buffer, -1, message, BUFFER_SIZE);
+    ::_tprintf(TEXT("%s\n"), message);
+    return TRUE;
   }
 
 private:
-  SOCKET socket_handle = INVALID_SOCKET;
+  SOCKET client_socket = INVALID_SOCKET;
   SOCKADDR_IN sockaddr;
   WSADATA wsadata;
+
+  TCHAR username[BUFFER_SIZE];
 };
 
 int _tmain(int argc, TCHAR *argv[]) {
@@ -75,7 +158,7 @@ int _tmain(int argc, TCHAR *argv[]) {
   }
 
   TCHAR* server_address = argv[1];
-  int __convert = StrToInt(argv[1]);
+  int __convert = StrToInt(argv[2]);
   if (__convert > MAXUINT16 || __convert <= 0) {
     ::_tprintf(TEXT("Invalid port number"));
     return 1;
@@ -88,17 +171,11 @@ int _tmain(int argc, TCHAR *argv[]) {
     ::_tprintf(TEXT("Failed to connect to server %s on port %d\n"), server_address, port);
     return 1;
   }
+  
+  if (!client.start_session()) {
+    ::_tprintf(TEXT("Failed to start session with server %s on port %d\n"), server_address, port);
+    return 1;
+  }
 
   return 0;
 }
-
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
-
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
