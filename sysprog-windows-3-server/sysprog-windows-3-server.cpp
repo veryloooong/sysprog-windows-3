@@ -118,7 +118,6 @@ public:
       else if (socket_count == 0) {
         continue;
       }
-      // If we have activity, process it
       else {
         // check for incoming connections
         if (FD_ISSET(server_socket, &available_sockets)) {
@@ -162,11 +161,11 @@ public:
           if (current_user == nullptr || !current_user->is_connected) {
             ::_tprintf(TEXT("Client disconnected or not found.\n"));
             FD_CLR(current_socket, &all_sockets);
-            users[i].is_connected = FALSE; // Mark user as disconnected
-            users[i].socket_handle = INVALID_SOCKET; // Reset socket handle
+            users[i].is_connected = FALSE; 
+            users[i].socket_handle = INVALID_SOCKET; 
             ::_tprintf(TEXT("Closing socket for user %s.\n"), current_user ? current_user->username : TEXT("Unknown"));
             FD_CLR(current_socket, &all_sockets);
-            user_count--; // Decrease user count if a user is disconnected
+            user_count--; 
             ::closesocket(current_socket);
             continue;
           }
@@ -244,7 +243,7 @@ private:
 
     // Send the message to all connected users
     for (UINT i = 0; i < user_count; i++) {
-      if (users[i].is_connected && users[i].socket_handle != INVALID_SOCKET) {
+      if (users[i].is_connected && users[i].socket_handle != INVALID_SOCKET && users[i].socket_handle != user->socket_handle) {
         int bytes_sent = ::send(users[i].socket_handle, send_buffer, static_cast<int>(strlen(send_buffer)), 0);
         if (bytes_sent == SOCKET_ERROR) {
           print_err_wsa(TEXT("send"));
@@ -257,8 +256,8 @@ private:
 };
 
 int _tmain(int argc, TCHAR *argv[]) {
-  if (argc != 2) {
-    ::_tprintf(TEXT("Usage: %s <PORT>"), argv[0]);
+  if (argc < 2) {
+    ::_tprintf(TEXT("Usage: %s <PORT> [<MAXCONNS>]"), argv[0]);
     return 1;
   }
   int __convert = StrToInt(argv[1]);
@@ -266,9 +265,17 @@ int _tmain(int argc, TCHAR *argv[]) {
     ::_tprintf(TEXT("Invalid port number"));
     return 1;
   }
+  int max_connections = 10; // Default max connections
+  if (argc >= 3) {
+    max_connections = StrToInt(argv[2]);
+    if (max_connections <= 0 || max_connections > 100) { // Arbitrary limit for max connections
+      ::_tprintf(TEXT("Invalid max connections, must be between 1 and 100"));
+      return 1;
+    }
+  }
 
   UINT16 port = __convert;
-  ChatServer server(port);
+  ChatServer server(port, max_connections);
   if (!server.is_initialized()) {
     ::_tprintf(TEXT("Failed to initialize server on port %d"), port);
     return 1;

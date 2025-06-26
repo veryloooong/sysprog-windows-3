@@ -129,7 +129,7 @@ public:
     char recv_buffer[BUFFER_SIZE] = { 0 };
     int bytes_received = ::recv(client_socket, recv_buffer, sizeof(recv_buffer) - 1, 0);
     if (bytes_received == SOCKET_ERROR) {
-      print_err_wsa(TEXT("recv"));
+      //print_err_wsa(TEXT("recv"));
       return FALSE;
     }
     else if (bytes_received == 0) {
